@@ -1,37 +1,43 @@
 # MoE-cls-seg
 
-A multimodal **Mixture of Experts (MoE)** system that accepts an image and a natural-language instruction, interprets the requested task, and routes the input to the appropriate vision expert.
+A multimodal **Mixture of Experts (MoE)** system that accepts an image and a natural-language instruction, determines the requested task, and routes the input to the appropriate vision expert.
 
-The project combines CLIP-based multimodal feature extraction with specialized YOLO models for image classification and segmentation. It is developed progressively across three stages, moving from basic task-based routing to confidence-aware and expert-performance-aware decisions.
+The project combines CLIP-based image and text feature extraction with specialized YOLO models for classification and segmentation. Across four progressive stages, the system evolves from basic task-based routing to confidence-aware decisions, expert-performance prediction, and feedback-driven adaptation.
 
 ---
 
-## Project Overview
+## 1. Project Overview
 
-The system consists of three main components:
+The system consists of the following components:
 
 - **Multimodal Gate:** Processes image and text features to determine the requested task.
-- **Classification Expert:** A YOLO classification model that predicts the category or breed in an image.
+- **Classification Expert:** A YOLO classification model that predicts the pet breed or category.
 - **Segmentation Expert:** A YOLO segmentation model that identifies and segments objects in an image.
+- **Confidence and Performance Prediction:** Estimates whether a routing decision is reliable and whether the selected expert is likely to succeed.
+- **Feedback Adaptation:** Uses reviewed expert outcomes to update the expert-performance prediction head.
 
-As the project progresses, the routing system gains the ability to recognize ambiguous requests, estimate routing confidence, and predict whether the selected expert is likely to produce a successful result.
+The architecture uses hard routing: the gate selects an expert rather than combining the predictions of multiple experts.
 
-## Overall Architecture
+## 2. Overall Architecture
 
 ```mermaid
 flowchart TD
-    A[Image Input] --> C[Multimodal Gate]
+    A[Image Input] --> C[CLIP Multimodal Encoder]
     B[Text Instruction] --> C
-    C --> D{Task Routing}
-    D -->|Classification| E[YOLO Classification Expert]
-    D -->|Segmentation| F[YOLO Segmentation Expert]
-    E --> G[Classification Result]
-    F --> H[Segmentation Result]
+    C --> D[Task Routing Gate]
+    D --> E{Routing Decision}
+    E -->|Classification| F[YOLO Classification Expert]
+    E -->|Segmentation| G[YOLO Segmentation Expert]
+    E -->|Ambiguous| H[Clarification / Abstention]
+    F --> I[Classification Result]
+    G --> J[Segmentation Result]
 ```
+
+The later stages extend this architecture with expert-performance prediction and feedback-based adaptation.
 
 ---
 
-## Project Structure
+## 3. Project Structure
 
 ```text
 MoE-cls-seg/
@@ -39,41 +45,42 @@ MoE-cls-seg/
 ├── Multimodal_MoE_Tutorial.ipynb
 ├── Stage2_Confidence_Aware_MoE.ipynb
 ├── Stage3_Expert_Performance_Aware_MoE.ipynb
+├── Stage4_Feedback_Driven_Adaptive_MoE.ipynb
 │
 ├── moe_inference.py
 ├── moe_confidence_inference.py
 │
 ├── artifacts/
+│   ├── router.pt
 │   ├── classification_best.pt
 │   ├── segmentation_best.pt
-│   ├── router.pt
 │   ├── router_confidence_aware.pt
 │   ├── moe_confidence_config.json
 │   ├── router_performance_aware.pt
-│   └── moe_performance_aware_config.json
+│   ├── moe_performance_aware_config.json
+│   ├── router_feedback_adaptive.pt
+│   └── moe_feedback_adaptive_config.json
+│
+├── feedback/
+│   ├── feedback_log_template.csv
+│   └── feedback_log.csv
 │
 └── README.md
 ```
 
-The `artifacts/` directory contains the trained model checkpoints and configuration files generated throughout the notebooks. Exact contents depend on which stages have been executed.
+The `artifacts/` directory stores trained model checkpoints and configuration files. The `feedback/` directory stores the feedback template and, optionally, reviewed prediction outcomes.
+
+The exact contents depend on which stages have been executed.
 
 ---
 
-# Stage 1 – Multimodal Task-Based Routing
+# 4. Stage 1 – Multimodal Task-Based Routing
 
 **Notebook:** `Multimodal_MoE_Tutorial.ipynb`
 
-Stage 1 introduces the fundamental Mixture of Experts architecture. The model receives an image and a text instruction, extracts multimodal features using CLIP, and uses a trainable gating network to select the appropriate YOLO expert.
+Stage 1 introduces the fundamental Mixture of Experts architecture.
 
-### Functionality
-
-- Uses pretrained CLIP to extract image and text embeddings.
-- Combines multimodal features and passes them through a trainable MLP gate.
-- Trains the gate to distinguish between classification and segmentation requests.
-- Uses two independent YOLO models as task-specific experts.
-- Routes each request to the selected expert.
-- Saves the gate and expert checkpoints for reuse.
-- Demonstrates inference and segmentation visualization.
+The model receives an image and a text instruction, extracts multimodal features using CLIP, and uses a trainable gating network to select the appropriate YOLO expert.
 
 ### Architecture
 
@@ -89,6 +96,17 @@ flowchart TD
     G --> I[Segmentation Output]
 ```
 
+### Functionality
+
+- Uses pretrained CLIP to extract image and text embeddings.
+- Combines multimodal features and passes them through a trainable MLP gate.
+- Trains the gate to distinguish between classification and segmentation requests.
+- Uses two independent YOLO models as task-specific experts.
+- Routes each request to the selected expert.
+- Supports expert training and dataset preparation.
+- Saves the gate and expert checkpoints for reuse.
+- Demonstrates inference and segmentation visualization.
+
 ### What You Will Learn
 
 - Fundamentals of Mixture of Experts architectures.
@@ -101,13 +119,17 @@ flowchart TD
 
 ### Main Outputs
 
-- `router.pt` – trained multimodal gating network.
-- `classification_best.pt` – trained YOLO classification expert.
-- `segmentation_best.pt` – trained YOLO segmentation expert.
+| File | Description |
+|---|---|
+| `router.pt` | Trained multimodal gating network. |
+| `classification_best.pt` | Trained YOLO classification expert. |
+| `segmentation_best.pt` | Trained YOLO segmentation expert. |
+
+**Key takeaway:** Stage 1 establishes the basic MoE system, where a multimodal gate decides which specialist model should handle a request.
 
 ---
 
-# Stage 2 – Confidence-Aware Routing
+# 5. Stage 2 – Confidence-Aware Routing
 
 **Notebook:** `Stage2_Confidence_Aware_MoE.ipynb`
 
@@ -125,17 +147,7 @@ The Stage 1 experts are reused, while the original two-output gate is expanded t
 | 1 | Segmentation | Route to the YOLO segmentation expert. |
 | 2 | Clarification | Abstain because the request is ambiguous. |
 
-### Functionality
-
-- Reuses the pretrained Stage 1 CLIP encoder and gating network.
-- Expands the routing head from two outputs to three.
-- Fine-tunes the gate using classification, segmentation, and ambiguous instructions.
-- Applies temperature scaling to calibrate routing probabilities.
-- Evaluates routing accuracy, negative log-likelihood (NLL), and Expected Calibration Error (ECE).
-- Plots reliability diagrams to inspect calibration.
-- Introduces confidence thresholds for selective routing.
-- Inspects the selected YOLO expert's output confidence as a separate quality signal.
-- Saves the confidence-aware router and its configuration.
+Clarification is a routing decision, not a third expert.
 
 ### Architecture
 
@@ -152,6 +164,18 @@ flowchart TD
     G --> J[Segmentation Output]
 ```
 
+### Functionality
+
+- Reuses the pretrained Stage 1 CLIP encoder and gating network.
+- Expands the routing head from two outputs to three.
+- Fine-tunes the gate using classification, segmentation, and ambiguous instructions.
+- Applies temperature scaling to calibrate routing probabilities.
+- Evaluates routing accuracy, negative log-likelihood (NLL), and Expected Calibration Error (ECE).
+- Generates reliability diagrams to inspect calibration.
+- Introduces confidence thresholds for selective routing.
+- Inspects the selected YOLO expert's output confidence as a separate quality signal.
+- Saves the confidence-aware router and its configuration.
+
 ### What You Will Learn
 
 - Why confidence matters in routing systems.
@@ -164,14 +188,18 @@ flowchart TD
 
 ### Main Outputs
 
-- `router_confidence_aware.pt` – three-way confidence-aware routing checkpoint.
-- `moe_confidence_config.json` – routing and calibration configuration.
+| File | Description |
+|---|---|
+| `router_confidence_aware.pt` | Three-way confidence-aware routing checkpoint. |
+| `moe_confidence_config.json` | Routing, calibration, and threshold configuration. |
 
 The Stage 1 YOLO expert checkpoints remain unchanged.
 
+**Key takeaway:** Stage 2 introduces the ability to recognize ambiguous requests and avoid dispatching inputs when the routing decision is not sufficiently confident.
+
 ---
 
-# Stage 3 – Expert-Performance-Aware Routing
+# 6. Stage 3 – Expert-Performance-Aware Routing
 
 **Notebook:** `Stage3_Expert_Performance_Aware_MoE.ipynb`
 
@@ -180,6 +208,22 @@ Stage 3 introduces an additional level of decision-making: predicting whether th
 Stage 2 estimates whether the task request is clear and whether the routing decision is sufficiently confident. Stage 3 builds on this by learning from the actual observed outcomes of the YOLO experts.
 
 A new expert-performance prediction head is added to the Stage 2 architecture. It estimates the probability of success for the expert associated with the requested task.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    A[Image + Text Prompt] --> B[CLIP Multimodal Features]
+    B --> C[Stage 2 Task Gate]
+    B --> D[Expert-Performance Head]
+    C --> E{Task / Ambiguity}
+    E -->|Classification| F[YOLO Classification]
+    E -->|Segmentation| G[YOLO Segmentation]
+    E -->|Ambiguous / Low Routing Confidence| H[Clarify / Abstain]
+    D --> I{Predicted Expert Success}
+    I -->|Above Quality Threshold| J[Accept / Dispatch]
+    I -->|Below Quality Threshold| K[Abstain / Human Review]
+```
 
 ### Functionality
 
@@ -193,30 +237,13 @@ A new expert-performance prediction head is added to the Stage 2 architecture. I
 - Trains the new head using observed expert outcomes.
 - Keeps CLIP and the Stage 2 task-routing gate frozen.
 - Evaluates quality prediction using Brier score and Expected Calibration Error (ECE).
-- Generates reliability diagrams for predicted expert success.
+- Generates reliability diagrams.
 - Studies the relationship between quality thresholds, coverage, and accepted success rate.
-- Combines Stage 2 routing confidence with predicted expert success in the final inference policy.
-
-### Architecture
-
-```mermaid
-flowchart TD
-    A[Image] --> C[CLIP Multimodal Features]
-    B[Text Instruction] --> C
-    C --> D[Stage 2 Task Gate]
-    C --> E[Expert-Performance Head]
-    D --> F{Task / Ambiguity}
-    F -->|Classification| G[Classification Expert]
-    F -->|Segmentation| H[Segmentation Expert]
-    F -->|Ambiguous / Low Routing Confidence| I[Clarification / Abstention]
-    E --> J{Predicted Expert Success}
-    J -->|Above Quality Threshold| K[Accept Expert Result]
-    J -->|Below Quality Threshold| L[Abstain / Human Review]
-```
+- Combines Stage 2 routing confidence with predicted expert success in the inference policy.
 
 ### How Stage 3 Works
 
-The inference policy applies two sequential checks:
+The inference policy applies two sequential checks.
 
 **1. Task and routing confidence**
 
@@ -244,34 +271,125 @@ The system does not silently switch to the other expert when predicted performan
 
 ### Main Outputs
 
-- `router_performance_aware.pt` – Stage 2 routing gate combined with the trained expert-performance head.
-- `moe_performance_aware_config.json` – model, expert, and threshold configuration.
+| File | Description |
+|---|---|
+| `router_performance_aware.pt` | Stage 2 routing gate combined with the trained expert-performance head. |
+| `moe_performance_aware_config.json` | Model, expert, and threshold configuration. |
 
 The Stage 1 YOLO checkpoints remain unchanged and are reused.
 
----
-
-## Comparison Across Stages
-
-| Feature | Stage 1 | Stage 2 | Stage 3 |
-|---|:---:|:---:|:---:|
-| Image and text input | Yes | Yes | Yes |
-| CLIP feature extraction | Yes | Yes | Yes |
-| YOLO classification expert | Yes | Yes | Yes |
-| YOLO segmentation expert | Yes | Yes | Yes |
-| Task-based routing | Yes | Yes | Yes |
-| Ambiguity detection | No | Yes | Yes |
-| Confidence-aware abstention | No | Yes | Yes |
-| Temperature scaling | No | Yes | Reuses Stage 2 |
-| Expert-output confidence inspection | Yes | Yes | Yes |
-| Ground-truth expert outcome evaluation | No | Separate evaluation | Yes |
-| Expert-performance prediction head | No | No | Yes |
-| Quality-based abstention | No | No | Yes |
-| Coverage and selective success analysis | No | Yes | Yes |
+**Key takeaway:** Stage 3 moves beyond asking whether the gate selected the correct task. It also estimates whether the selected expert is likely to succeed at that task.
 
 ---
 
-## Inference
+# 7. Stage 4 – Feedback-Driven Adaptive MoE
+
+**Notebook:** `Stage4_Feedback_Driven_Adaptive_MoE.ipynb`
+
+Stage 4 introduces a feedback loop to the Stage 3 system.
+
+Reviewed outcomes from completed predictions are recorded and used to adapt the expert-performance prediction head. This allows the system to incorporate additional observations and update its estimates of expert success.
+
+Only the Stage 3 quality head is fine-tuned. CLIP, the three-way task-routing gate, and both YOLO experts remain frozen.
+
+### Architecture
+
+```mermaid
+flowchart TD
+    A[Stage 3 Prediction] --> B[Review Expert Outcome]
+    B --> C[Record Feedback]
+    C --> D[Feedback Dataset]
+    D --> E[Adapt Quality Head]
+    E --> F[Stage 4 Model]
+    F --> G{Predicted Expert Success}
+    G -->|Above Threshold| H[Accept / Dispatch]
+    G -->|Below Threshold| I[Review / Abstain]
+```
+
+### Feedback Sources
+
+The notebook supports two feedback sources:
+
+**1. Ground-truth bootstrap feedback**
+
+Automatically generates task-specific success/failure labels using Oxford-IIIT Pet annotations. This provides a reproducible way to demonstrate the feedback workflow.
+
+**2. Reviewed prediction feedback**
+
+Loads additional examples that have been reviewed and recorded in `feedback_log.csv`.
+
+### Functionality
+
+- Creates a persistent CSV format for reviewed expert outcomes.
+- Loads and validates feedback records.
+- Supports ground-truth-derived bootstrap feedback.
+- Splits feedback by source image to avoid image-level overlap between training and evaluation subsets.
+- Evaluates the Stage 3 model as a baseline.
+- Fine-tunes only the expert-performance prediction head.
+- Compares Stage 3 and Stage 4 quality predictions.
+- Evaluates calibration and selective coverage.
+- Saves the adapted model and configuration.
+- Provides a helper function for recording reviewed predictions.
+
+### Feedback CSV Format
+
+The feedback file uses the following columns:
+
+| Column | Description |
+|---|---|
+| `image_path` | Path to the image used for inference. |
+| `prompt` | Original natural-language instruction. |
+| `task_id` | `0` for classification, `1` for segmentation. |
+| `success` | `1` for success, `0` for failure after review. |
+| `source_id` | Stable identifier for the source image. |
+
+A consistent `source_id` should be used for all tasks associated with the same source image.
+
+### What You Will Learn
+
+- How to create a feedback dataset from observed expert outcomes.
+- How to record task-specific success and failure labels.
+- How to build a repeatable feedback ingestion workflow.
+- How to fine-tune an auxiliary prediction head using new observations.
+- How to prevent source-image leakage during feedback evaluation.
+- How to compare model predictions before and after adaptation.
+- How feedback can affect calibration and selective coverage.
+
+### Main Outputs
+
+| File | Description |
+|---|---|
+| `router_feedback_adaptive.pt` | Stage 4 model with the adapted expert-performance head. |
+| `moe_feedback_adaptive_config.json` | Model, expert, threshold, and feedback configuration. |
+| `feedback_log_template.csv` | Empty template for reviewed feedback. |
+| `feedback_log.csv` | Optional file containing reviewed outcomes. |
+
+**Key takeaway:** Stage 4 introduces a repeatable feedback-based adaptation process. The system can use reviewed outcomes to update its expert-performance predictions without retraining the underlying vision experts or task-routing gate.
+
+---
+
+# 8. Comparison Across All Four Stages
+
+| Feature | Stage 1 | Stage 2 | Stage 3 | Stage 4 |
+|---|:---:|:---:|:---:|:---:|
+| Image and text input | Yes | Yes | Yes | Yes |
+| CLIP feature extraction | Yes | Yes | Yes | Yes |
+| YOLO classification expert | Yes | Yes | Yes | Yes |
+| YOLO segmentation expert | Yes | Yes | Yes | Yes |
+| Task-based routing | Yes | Yes | Yes | Yes |
+| Ambiguity detection | No | Yes | Yes | Yes |
+| Confidence-aware abstention | No | Yes | Yes | Yes |
+| Temperature scaling | No | Yes | Reuses Stage 2 | Reuses Stage 2 |
+| Expert-performance prediction | No | No | Yes | Yes |
+| Ground-truth expert outcome labels | No | No | Yes | Optional bootstrap |
+| Feedback-based adaptation | No | No | No | Yes |
+| Quality-head fine-tuning | No | No | Yes | Yes |
+| Feedback ingestion | No | No | No | Yes |
+| Coverage and reliability analysis | Basic routing evaluation | Yes | Yes | Yes |
+
+---
+
+# 9. Inference
 
 The project includes standalone Python modules for running inference outside Jupyter notebooks.
 
@@ -280,13 +398,15 @@ The project includes standalone Python modules for running inference outside Jup
 | `moe_inference.py` | Loads the Stage 1 gate and YOLO experts for task-based inference. |
 | `moe_confidence_inference.py` | Loads the Stage 2 confidence-aware gate and YOLO experts for confidence-aware inference. |
 
-Stage 3 inference is demonstrated within `Stage3_Expert_Performance_Aware_MoE.ipynb`. Its saved checkpoint and configuration can be used as the basis for a standalone deployment wrapper.
+Stage 3 and Stage 4 inference are demonstrated inside their respective notebooks. Their saved checkpoints and configurations provide the basis for extending standalone deployment.
+
+For inference, keep the required checkpoint files together in the configured `artifacts/` directory.
 
 ---
 
-## Installation and Execution
+# 10. Installation and Execution
 
-The notebooks are designed to run on:
+The notebooks are designed to support execution on:
 
 - Google Colab
 - Linux
@@ -312,26 +432,31 @@ Run the notebooks in sequence:
 1. `Multimodal_MoE_Tutorial.ipynb`
 2. `Stage2_Confidence_Aware_MoE.ipynb`
 3. `Stage3_Expert_Performance_Aware_MoE.ipynb`
+4. `Stage4_Feedback_Driven_Adaptive_MoE.ipynb`
 
-Each stage builds on artifacts generated by the previous stages. Ensure the required checkpoints are available in the configured `artifacts/` directory before proceeding.
+Each stage builds on the artifacts generated by previous stages. Ensure the required checkpoints are available in the configured `artifacts/` directory before proceeding.
 
 ---
 
-## Important Limitations
+# 11. Important Limitations
 
 - **Stage 1:** The gate primarily learns to recognize the requested task from image and text features. It does not learn to compare the actual performance of the experts.
-- **Stage 2:** Ambiguity handling is trained using supervised prompt labels. The system does not independently establish whether an instruction is ambiguous in every possible real-world situation.
+- **Stage 2:** Ambiguity handling is trained using supervised prompt labels. The system does not independently establish whether every real-world instruction is ambiguous.
+- **Stage 2:** Softmax confidence is not an out-of-distribution detector. An unfamiliar prompt can still receive a high confidence score.
 - **Stage 2:** Classification confidence and segmentation confidence are task-specific signals and should not be treated as directly comparable.
 - **Stage 3:** The performance head predicts whether the selected expert will meet a defined task-specific success criterion. It does not compare the two experts as interchangeable alternatives.
 - **Stage 3:** Classification and segmentation use different success definitions: top-1 correctness and foreground IoU, respectively.
-- **Dataset:** The Oxford-IIIT Pet test split has been used during earlier development stages for expert checkpoint selection and routing calibration/evaluation. Consequently, the later-stage results are intended as a progressive learning demonstration rather than a pristine independent benchmark.
-- **Thresholds:** Routing and quality thresholds are operating choices. Their values should be evaluated against the intended application and the desired balance between coverage and reliability.
+- **Stage 4:** Feedback adaptation updates only the expert-performance prediction head. It does not retrain the YOLO experts, CLIP encoder, or Stage 2 task-routing gate.
+- **Stage 4:** Feedback adaptation does not guarantee improvement. Feedback may be noisy, sparse, or unrepresentative.
+- **Stage 4:** Ground-truth bootstrap feedback is proxy feedback, not human review. New feedback is incorporated by rerunning the notebook; adaptation does not happen continuously in the background.
+- **Dataset evaluation:** The Oxford-IIIT Pet test split was used in earlier stages for checkpoint selection and calibration/evaluation. Consequently, later-stage results are intended as a progressive learning demonstration, not a pristine independent benchmark. A new untouched test set is needed for a rigorous final evaluation.
+- **Thresholds:** Routing and quality thresholds are application-dependent. Their values should be evaluated against the desired balance between coverage and reliability.
 
 ---
 
-## Learning Outcomes
+# 12. Learning Outcomes
 
-By completing all three stages, you will gain practical experience with:
+By completing all four stages, you will gain practical experience with:
 
 1. Multimodal learning using image and text inputs.
 2. CLIP-based feature extraction.
@@ -342,14 +467,20 @@ By completing all three stages, you will gain practical experience with:
 7. Expert-performance prediction using observed outcomes.
 8. Brier score, Expected Calibration Error, and reliability diagrams.
 9. Selective prediction and coverage analysis.
-10. Saving, loading, and reusing trained model checkpoints.
+10. Feedback dataset construction and validation.
+11. Fine-tuning auxiliary prediction heads.
+12. Comparing model behavior before and after feedback adaptation.
+13. Saving, loading, and reusing trained model checkpoints.
 
 ---
 
-## Conclusion
+# 13. Conclusion
 
-This project demonstrates the progressive development of a multimodal Mixture of Experts system.
+This project demonstrates the progressive development of a multimodal Mixture of Experts system across four stages.
 
-Starting with task-based routing in Stage 1, it introduces confidence-aware decisions and abstention in Stage 2, and finally learns to estimate task-specific expert performance in Stage 3.
+- **Stage 1:** Learns to route image and text inputs to the appropriate task-specific expert.
+- **Stage 2:** Introduces confidence-aware routing and an explicit clarification mechanism.
+- **Stage 3:** Learns to estimate whether the selected expert is likely to produce a successful result.
+- **Stage 4:** Incorporates reviewed outcomes to adapt expert-performance predictions.
 
-Together, the three stages provide a practical exploration of multimodal routing, specialized vision models, confidence calibration, and performance-aware decision-making.
+Together, these stages provide a practical exploration of multimodal routing, specialized vision models, confidence calibration, performance prediction, and feedback-driven adaptation.
